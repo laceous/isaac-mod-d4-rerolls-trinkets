@@ -1,0 +1,1 @@
+# isaac-mod-d4-rerolls-trinkets
