@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+    <name>D4 Rerolls Trinkets (+Tainted Eden)</name>
+    <directory>d4 rerolls trinkets</directory>
+    <id>3122291581</id>
+    <description>By default, the D4 doesn't re-roll held trinkets. This mod corrects that. Slotted and smelted trinkets are both supported. Other items that call the D4 (d100, d infinity, missing no, dice room, reverse wheel of fortune, etc) are also supported.
+
+By default, Tainted Eden re-rolls slotted trinkets when taking damage. This mod adds support for smelted trinkets.
+
+This is a companion mod to [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3122288780]D4 Rerolls Item Wisps[/url].</description>
+    <version>1.1</version>
+    <visibility>Public</visibility>
+    <tag id="Lua"/>
+    <tag id="Tweaks"/>
+</metadata>
