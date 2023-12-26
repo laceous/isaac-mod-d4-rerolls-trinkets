@@ -8,7 +8,7 @@ function mod:onUseItem(collectible, rng, player, useFlags, activeSlot, varData)
   mod:rerollTrinkets(player, rng)
 end
 
---filtered to ENTITY_PLAYER
+-- filtered to ENTITY_PLAYER
 function mod:onEntityTakeDmg(entity, amount, dmgFlags, source, countdown)
   local player = entity:ToPlayer()
   
