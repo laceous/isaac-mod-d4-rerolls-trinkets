@@ -7,8 +7,10 @@
 
 By default, Tainted Eden re-rolls slotted trinkets when taking damage. This mod adds support for smelted trinkets.
 
+Additional Birthright support for Tainted Eden has been added. After obtaining Birthright, smelted trinkets will no longer be re-rolled.
+
 This is a companion mod to [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3122288780]D4 Rerolls Item Wisps[/url].</description>
-    <version>1.1</version>
+    <version>1.2</version>
     <visibility>Public</visibility>
     <tag id="Lua"/>
     <tag id="Tweaks"/>
