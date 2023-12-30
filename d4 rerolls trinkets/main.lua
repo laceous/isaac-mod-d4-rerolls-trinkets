@@ -47,11 +47,9 @@ function mod:rerollTrinkets(player, rng, rollSlottedTrinkets)
       local trinketRemoved = nil
       
       while trinketRemoved ~= false and player:HasTrinket(trinket, false) do -- false for smelted trinkets
-        if player:TryRemoveTrinket(trinket) then -- check in case this is something we can't remove
+        trinketRemoved = player:TryRemoveTrinket(trinket) -- check in case this is something we can't remove
+        if trinketRemoved then
           table.insert(smeltedTrinkets, trinket)
-          trinketRemoved = true
-        else
-          trinketRemoved = false
         end
       end
     end
