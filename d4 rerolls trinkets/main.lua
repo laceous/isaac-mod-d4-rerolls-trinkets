@@ -1,11 +1,41 @@
 local mod = RegisterMod('D4 Rerolls Trinkets', 1)
+local json = require('json')
 local game = Game()
 
+mod.taintedEdenTrinkets = {}
 mod.rngShiftIdx = 35
+
+mod.state = {}
+mod.state.rollSlottedTrinkets = true
+mod.state.rollSmeltedTrinkets = true
+mod.state.keepGoldTrinketStatus = false
+
+function mod:onGameStart()
+  if mod:HasData() then
+    local _, state = pcall(json.decode, mod:LoadData())
+    
+    if type(state) == 'table' then
+      for _, v in ipairs({ 'rollSlottedTrinkets', 'rollSmeltedTrinkets', 'keepGoldTrinketStatus' }) do
+        if type(state[v]) == 'boolean' then
+          mod.state[v] = state[v]
+        end
+      end
+    end
+  end
+end
+
+function mod:onGameExit()
+  mod:save()
+  mod:clearTaintedEdenTrinkets()
+end
+
+function mod:save()
+  mod:SaveData(json.encode(mod.state))
+end
 
 -- filtered to COLLECTIBLE_D4 (includes D100, etc)
 function mod:onUseItem(collectible, rng, player, useFlags, activeSlot, varData)
-  mod:rerollTrinkets(player, rng, true)
+  mod:rerollTrinkets(player, rng, false)
 end
 
 -- filtered to ENTITY_PLAYER
@@ -15,12 +45,49 @@ function mod:onEntityTakeDmg(entity, amount, dmgFlags, source, countdown)
   if player:GetPlayerType() == PlayerType.PLAYER_EDEN_B and not mod:hasAnyFlag(dmgFlags, DamageFlag.DAMAGE_FAKE | DamageFlag.DAMAGE_NO_PENALTIES) then
     local rng = RNG()
     rng:SetSeed(player.InitSeed, mod.rngShiftIdx)
-    mod:rerollTrinkets(player, rng, false) -- tainted eden will have already re-rolled any slotted trinkets
+    mod:rerollTrinkets(player, rng, true)
   end
 end
 
-function mod:rerollTrinkets(player, rng, rollSlottedTrinkets)
+-- filtered to 0-Player
+function mod:onPlayerUpdate(player)
+  if player:GetPlayerType() == PlayerType.PLAYER_EDEN_B then
+    local playerHash = GetPtrHash(player)
+    
+    -- overwrite new tainted eden trinkets with our choices
+    if mod.taintedEdenTrinkets[playerHash] then
+      local slottedTrinkets = {}
+      
+      do
+        local slot = 0
+        local trinket = player:GetTrinket(slot)
+        
+        while trinket ~= TrinketType.TRINKET_NULL do
+          player:TryRemoveTrinket(trinket)
+          table.insert(slottedTrinkets, trinket)
+          
+          trinket = player:GetTrinket(slot)
+        end
+      end
+      
+      for i, trinket in ipairs(slottedTrinkets) do
+        if mod.state.keepGoldTrinketStatus and mod.taintedEdenTrinkets[playerHash][i] then
+          -- sync gold status for the game's selected trinket
+          local isGoldTrinket = mod.taintedEdenTrinkets[playerHash][i] > TrinketType.TRINKET_GOLDEN_FLAG
+          trinket = isGoldTrinket and trinket | TrinketType.TRINKET_GOLDEN_FLAG or trinket & ~TrinketType.TRINKET_GOLDEN_FLAG
+        end
+        
+        player:AddTrinket(trinket, false)
+      end
+      
+      mod.taintedEdenTrinkets[playerHash] = nil
+    end
+  end
+end
+
+function mod:rerollTrinkets(player, rng, isTaintedEden)
   local itemPool = game:GetItemPool()
+  local playerHash = GetPtrHash(player)
   local slottedTrinkets = {}
   local smeltedTrinkets = {}
   
@@ -41,31 +108,57 @@ function mod:rerollTrinkets(player, rng, rollSlottedTrinkets)
   
   -- additional tainted eden birthright behavior: smelted trinkets are no longer re-rolled
   -- not sure it's possible to 100% support only smelted trinkets obtained before birthright
-  if not (player:GetPlayerType() == PlayerType.PLAYER_EDEN_B and player:HasCollectible(CollectibleType.COLLECTIBLE_BIRTHRIGHT, false)) then
-    -- treat golden trinkets the same as non-golden trinkets (all trinkets count as +1)
-    for _, trinket in ipairs(mod:getTrinkets()) do
-      local trinketRemoved = nil
-      
-      while trinketRemoved ~= false and player:HasTrinket(trinket, false) do -- false for smelted trinkets
-        trinketRemoved = player:TryRemoveTrinket(trinket) -- check in case this is something we can't remove
-        if trinketRemoved then
-          table.insert(smeltedTrinkets, trinket)
+  if mod.state.rollSmeltedTrinkets and not mod:isTaintedEdenBirthright(player) then
+    for _, trinket in ipairs(mod:getTrinkets()) do -- all non-gold trinket IDs
+      for _, trinket in ipairs({ trinket + TrinketType.TRINKET_GOLDEN_FLAG, trinket }) do -- check gold first
+        local trinketRemoved = nil
+        
+        -- HasTrinket doesn't differentiate between gold and non-gold trinkets
+        while trinketRemoved ~= false and player:HasTrinket(trinket, false) do -- false for smelted trinkets
+          -- will remove gold or non-gold trinkets when passed non-gold ID
+          -- will only remove gold trinkets when passed gold ID
+          trinketRemoved = player:TryRemoveTrinket(trinket)
+          
+          -- check in case this is something we can't remove
+          if trinketRemoved then
+            table.insert(smeltedTrinkets, trinket)
+          end
         end
       end
     end
   end
   
-  for _ in ipairs(smeltedTrinkets) do
-    local trinket = itemPool:GetTrinket(false)
-    player:AddTrinket(trinket, false) -- rolled passive items don't give pickups
+  for _, trinket in ipairs(smeltedTrinkets) do
+    local isGoldTrinket = trinket > TrinketType.TRINKET_GOLDEN_FLAG
+    trinket = itemPool:GetTrinket(false) -- could be gold or non-gold
+    
+    if mod.state.keepGoldTrinketStatus then
+      trinket = isGoldTrinket and trinket | TrinketType.TRINKET_GOLDEN_FLAG or trinket & ~TrinketType.TRINKET_GOLDEN_FLAG
+    end
+    
+    player:AddTrinket(trinket, false) -- rolled trinkets don't give pickups
     player:UseActiveItem(CollectibleType.COLLECTIBLE_SMELTER, false, false, true, false, -1, 0)
   end
   
+  if isTaintedEden and mod.state.keepGoldTrinketStatus then
+    mod.taintedEdenTrinkets[playerHash] = {}
+  end
+  
   for _, trinket in ipairs(slottedTrinkets) do
-    if rollSlottedTrinkets then
+    if not isTaintedEden and mod.state.rollSlottedTrinkets then
+      local isGoldTrinket = trinket > TrinketType.TRINKET_GOLDEN_FLAG
       trinket = itemPool:GetTrinket(false)
+      
+      if mod.state.keepGoldTrinketStatus then
+        trinket = isGoldTrinket and trinket | TrinketType.TRINKET_GOLDEN_FLAG or trinket & ~TrinketType.TRINKET_GOLDEN_FLAG
+      end
     end
-    player:AddTrinket(trinket, false) -- rolled trinkets don't give pickups
+    
+    player:AddTrinket(trinket, false)
+    
+    if isTaintedEden and mod.state.keepGoldTrinketStatus then
+      table.insert(mod.taintedEdenTrinkets[playerHash], trinket)
+    end
   end
 end
 
@@ -97,8 +190,19 @@ function mod:hasTaintedEden()
   return false
 end
 
+function mod:isTaintedEdenBirthright(player)
+  return player:GetPlayerType() == PlayerType.PLAYER_EDEN_B and
+         player:HasCollectible(CollectibleType.COLLECTIBLE_BIRTHRIGHT, false)
+end
+
 function mod:hasAnyFlag(flags, flag)
   return flags & flag ~= 0
+end
+
+function mod:clearTaintedEdenTrinkets()
+  for k, _ in pairs(mod.taintedEdenTrinkets) do
+    mod.taintedEdenTrinkets[k] = nil
+  end
 end
 
 function mod:setupEid()
@@ -119,9 +223,66 @@ function mod:setupEid()
   end)
 end
 
+-- start ModConfigMenu --
+function mod:setupModConfigMenu()
+  for _, v in ipairs({ 'Settings' }) do
+    ModConfigMenu.RemoveSubcategory(mod.Name, v)
+  end
+  for _, v in ipairs({
+                      { field = 'rollSlottedTrinkets', adjective = 'slotted', info = { 'Reroll trinkets in either of the first two slots?' } },
+                      { field = 'rollSmeltedTrinkets', adjective = 'smelted', info = { 'Reroll trinkets that have been smelted/gulped?' } },
+                    })
+  do
+    ModConfigMenu.AddSetting(
+      mod.Name,
+      'Settings',
+      {
+        Type = ModConfigMenu.OptionType.BOOLEAN,
+        CurrentSetting = function()
+          return mod.state[v.field]
+        end,
+        Display = function()
+          return 'Reroll ' .. v.adjective .. ' trinkets: ' .. (mod.state[v.field] and 'on' or 'off')
+        end,
+        OnChange = function(b)
+          mod.state[v.field] = b
+          mod:save()
+        end,
+        Info = v.info
+      }
+    )
+  end
+  ModConfigMenu.AddSpace(mod.Name, 'Settings')
+  ModConfigMenu.AddSetting(
+    mod.Name,
+    'Settings',
+    {
+      Type = ModConfigMenu.OptionType.BOOLEAN,
+      CurrentSetting = function()
+        return mod.state.keepGoldTrinketStatus
+      end,
+      Display = function()
+        return 'Golden trinkets: ' .. (mod.state.keepGoldTrinketStatus and 'keep status' or 'random')
+      end,
+      OnChange = function(b)
+        mod.state.keepGoldTrinketStatus = b
+        mod:save()
+      end,
+      Info = { 'Random: gold can reroll into non-gold', 'Keep status: gold will always reroll into gold', '(and vice versa)' }
+    }
+  )
+end
+-- end ModConfigMenu --
+
+mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, mod.onGameStart)
+mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, mod.onGameExit)
 mod:AddCallback(ModCallbacks.MC_USE_ITEM, mod.onUseItem, CollectibleType.COLLECTIBLE_D4)
 mod:AddPriorityCallback(ModCallbacks.MC_ENTITY_TAKE_DMG, CallbackPriority.LATE, mod.onEntityTakeDmg, EntityType.ENTITY_PLAYER) -- let other mods "return false"
+mod:AddCallback(ModCallbacks.MC_POST_PLAYER_UPDATE, mod.onPlayerUpdate, 0) -- 0 is player, 1 is co-op baby
 
 if EID then
   mod:setupEid()
+end
+if ModConfigMenu then
+  mod:setupModConfigMenu()
 end
